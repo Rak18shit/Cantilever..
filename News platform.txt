@@ -1,0 +1,361 @@
+import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, doc, setDoc, getDoc, collection, addDoc } from 'firebase/firestore';
+
+// Mock data to simulate fetching from a news API
+const MOCK_ARTICLES = [
+  {
+    id: 1,
+    title: "Breakthrough in Renewable Energy",
+    description: "Scientists have discovered a new method to generate electricity from sunlight with 90% efficiency, promising a future of clean energy.",
+    category: "Technology",
+    image: "https://placehold.co/600x400/34D399/FFFFFF?text=Technology",
+    url: "#"
+  },
+  {
+    id: 2,
+    title: "Global Markets Stabilize After Volatile Week",
+    description: "After a period of significant fluctuation, major global stock markets have shown signs of stabilization, easing investor concerns.",
+    category: "Finance",
+    image: "https://placehold.co/600x400/FACC15/000000?text=Finance",
+    url: "#"
+  },
+  {
+    id: 3,
+    title: "New Study Reveals Benefits of Mediterranean Diet",
+    description: "A comprehensive study has linked the Mediterranean diet to a significant reduction in heart disease and improved longevity.",
+    category: "Health",
+    image: "https://placehold.co/600x400/60A5FA/FFFFFF?text=Health",
+    url: "#"
+  },
+  {
+    id: 4,
+    title: "Robotics and AI Revolutionize Manufacturing",
+    description: "Advanced robotics and artificial intelligence are being integrated into manufacturing processes to increase efficiency and reduce costs.",
+    category: "Technology",
+    image: "https://placehold.co/600x400/34D399/FFFFFF?text=Technology",
+    url: "#"
+  },
+  {
+    id: 5,
+    title: "Central Banks Consider Digital Currency Adoption",
+    description: "Several central banks are exploring the feasibility of creating their own digital currencies to modernize financial systems.",
+    category: "Finance",
+    image: "https://placehold.co/600x400/FACC15/000000?text=Finance",
+    url: "#"
+  },
+  {
+    id: 6,
+    title: "Exploring the Health Impacts of Microplastics",
+    description: "Researchers are beginning to understand the long-term health effects of microplastics, which are now ubiquitous in our environment.",
+    category: "Health",
+    image: "https://placehold.co/600x400/60A5FA/FFFFFF?text=Health",
+    url: "#"
+  },
+  {
+    id: 7,
+    title: "The Future of Space Tourism: What to Expect",
+    description: "As private companies race to make space travel accessible, a new era of tourism is on the horizon, but challenges remain.",
+    category: "Science",
+    image: "https://placehold.co/600x400/EC4899/FFFFFF?text=Science",
+    url: "#"
+  },
+  {
+    id: 8,
+    title: "New Species of Deep-Sea Fish Discovered",
+    description: "An international team of marine biologists has identified a previously unknown species of fish in the Mariana Trench.",
+    category: "Science",
+    image: "https://placehold.co/600x400/EC4899/FFFFFF?text=Science",
+    url: "#"
+  },
+];
+
+const categories = ['All', 'Technology', 'Finance', 'Health', 'Science'];
+
+const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+function App() {
+  const [db, setDb] = useState(null);
+  const [auth, setAuth] = useState(null);
+  const [user, setUser] = useState(null);
+  const [userEmail, setUserEmail] = useState('');
+  const [userPassword, setUserPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isLoginMode, setIsLoginMode] = useState(true);
+
+  const [articles, setArticles] = useState(MOCK_ARTICLES);
+  const [selectedCategory, setSelectedCategory] = useState('All');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Initialize Firebase and auth state
+  useEffect(() => {
+    try {
+      if (Object.keys(firebaseConfig).length > 0) {
+        const app = initializeApp(firebaseConfig);
+        const authInstance = getAuth(app);
+        const dbInstance = getFirestore(app);
+        setAuth(authInstance);
+        setDb(dbInstance);
+
+        onAuthStateChanged(authInstance, async (currentUser) => {
+          if (currentUser) {
+            setUser(currentUser);
+          } else {
+            setUser(null);
+          }
+          setIsAuthLoading(false);
+        });
+
+        // Use custom token for auto-login if available
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        if (initialAuthToken) {
+          signInWithCustomToken(authInstance, initialAuthToken).catch(e => {
+            console.error("Custom token sign-in failed:", e);
+            signInAnonymously(authInstance);
+          });
+        } else {
+          signInAnonymously(authInstance);
+        }
+      }
+    } catch (e) {
+      console.error("Firebase initialization failed:", e);
+      setIsAuthLoading(false);
+    }
+  }, []);
+
+  // Filter articles based on category and search query
+  const filteredArticles = articles.filter(article => {
+    const matchesCategory = selectedCategory === 'All' || article.category === selectedCategory;
+    const matchesSearch = article.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          article.description.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesCategory && matchesSearch;
+  });
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    setIsLoading(true);
+    try {
+      await signInWithEmailAndPassword(auth, userEmail, userPassword);
+      setIsModalOpen(false);
+    } catch (error) {
+      setAuthError(error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSignup = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    setIsLoading(true);
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, userEmail, userPassword);
+      // Optional: Add user data to Firestore
+      const userRef = doc(db, `artifacts/${appId}/users/${userCredential.user.uid}`);
+      await setDoc(userRef, { email: userEmail, created: new Date() });
+      setIsModalOpen(false);
+    } catch (error) {
+      setAuthError(error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    if (auth) {
+      await signOut(auth);
+    }
+  };
+
+  const handleCategoryClick = (category) => {
+    setSelectedCategory(category);
+  };
+
+  if (isAuthLoading) {
+    return (
+      <div className="flex justify-center items-center h-screen bg-gray-900 text-white">
+        <div className="text-xl font-semibold">Loading...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="font-sans antialiased text-gray-200 min-h-screen bg-gray-900">
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      `}</style>
+      <div className="container mx-auto px-4 py-8">
+        <header className="flex justify-between items-center py-4 mb-8 border-b-2 border-gray-700">
+          <h1 className="text-4xl font-bold text-gray-100">News Aggregator</h1>
+          {user ? (
+            <div className="flex items-center space-x-4">
+              <span className="text-sm text-gray-400 hidden sm:block">
+                Logged in as: {user.email || 'Guest'}
+              </span>
+              <button
+                onClick={handleLogout}
+                className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-full shadow-lg transition duration-300 transform hover:scale-105"
+              >
+                Logout
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => { setIsModalOpen(true); setAuthError(''); setIsLoginMode(true); }}
+              className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-full shadow-lg transition duration-300 transform hover:scale-105"
+            >
+              Login / Sign Up
+            </button>
+          )}
+        </header>
+
+        {/* Auth Modal */}
+        {isModalOpen && (
+          <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex justify-center items-center z-50">
+            <div className="bg-gray-800 p-8 rounded-lg shadow-2xl w-full max-w-sm">
+              <h2 className="text-2xl font-bold text-center text-gray-100 mb-6">
+                {isLoginMode ? 'Login' : 'Sign Up'}
+              </h2>
+              {authError && (
+                <div className="p-3 mb-4 rounded-lg bg-red-800 text-sm text-white text-center">
+                  {authError}
+                </div>
+              )}
+              <form onSubmit={isLoginMode ? handleLogin : handleSignup}>
+                <input
+                  type="email"
+                  value={userEmail}
+                  onChange={(e) => setUserEmail(e.target.value)}
+                  placeholder="Email"
+                  required
+                  className="w-full p-3 mb-4 rounded-md bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <input
+                  type="password"
+                  value={userPassword}
+                  onChange={(e) => setUserPassword(e.target.value)}
+                  placeholder="Password"
+                  required
+                  className="w-full p-3 mb-4 rounded-md bg-gray-700 text-gray-200 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full p-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-md shadow-lg transition duration-300 disabled:opacity-50"
+                >
+                  {isLoading ? 'Loading...' : (isLoginMode ? 'Login' : 'Sign Up')}
+                </button>
+              </form>
+              <div className="flex justify-center mt-4">
+                <button
+                  onClick={() => setIsLoginMode(!isLoginMode)}
+                  className="text-sm text-blue-400 hover:underline"
+                >
+                  {isLoginMode ? 'Need an account? Sign up' : 'Already have an account? Login'}
+                </button>
+                <button
+                  onClick={() => setIsModalOpen(false)}
+                  className="text-sm text-gray-400 hover:underline ml-4"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Content Section */}
+        <div className="flex flex-col md:flex-row space-y-8 md:space-y-0 md:space-x-8">
+          {/* Sidebar for Filters */}
+          <aside className="w-full md:w-1/4 bg-gray-800 p-6 rounded-lg shadow-xl">
+            <h3 className="text-2xl font-semibold mb-4 text-gray-100">Categories</h3>
+            <ul className="space-y-2">
+              {categories.map((category) => (
+                <li key={category}>
+                  <button
+                    onClick={() => handleCategoryClick(category)}
+                    className={`w-full text-left p-3 rounded-md transition duration-200 ${
+                      selectedCategory === category
+                        ? 'bg-blue-600 text-white font-bold shadow-md'
+                        : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                    }`}
+                  >
+                    {category}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </aside>
+
+          {/* Main News Content */}
+          <main className="w-full md:w-3/4">
+            <div className="mb-6">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search for articles..."
+                className="w-full p-4 rounded-lg bg-gray-800 text-gray-200 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+              />
+            </div>
+            
+            {filteredArticles.length > 0 ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                {filteredArticles.map((article) => (
+                  <a href={article.url} key={article.id} className="block transition duration-300 transform hover:scale-105">
+                    <div className="bg-gray-800 rounded-xl shadow-xl overflow-hidden h-full flex flex-col">
+                      <img
+                        src={article.image}
+                        alt={article.title}
+                        className="w-full h-48 object-cover object-center"
+                        loading="lazy"
+                        onError={(e) => {
+                            e.target.onerror = null;
+                            e.target.src = "https://placehold.co/600x400/4B5563/FFFFFF?text=Image+Not+Found";
+                        }}
+                      />
+                      <div className="p-6 flex flex-col justify-between flex-grow">
+                        <div>
+                          <span className="inline-block bg-gray-700 text-xs font-semibold px-2 py-1 rounded-full text-gray-300 mb-2">
+                            {article.category}
+                          </span>
+                          <h4 className="text-xl font-bold text-gray-100 mb-2">
+                            {article.title}
+                          </h4>
+                          <p className="text-sm text-gray-400 leading-relaxed mb-4">
+                            {article.description}
+                          </p>
+                        </div>
+                        <button
+                          onClick={(e) => { e.preventDefault(); window.open(article.url, '_blank'); }}
+                          className="mt-auto block text-center w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-full shadow-md transition duration-200"
+                        >
+                          Read More
+                        </button>
+                      </div>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            ) : (
+              <div className="flex justify-center items-center h-64 bg-gray-800 rounded-lg shadow-lg">
+                <p className="text-xl text-gray-400">No articles found.</p>
+              </div>
+            )}
+          </main>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default App;
